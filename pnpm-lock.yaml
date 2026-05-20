@@ -14,8 +14,8 @@ dependencies:
 
 devDependencies:
   '@supaproxy/core':
-    specifier: file:../supaproxy-core
-    version: file:../supaproxy-core(@types/express@5.0.6)(@types/node@22.19.19)
+    specifier: ^1.0.0
+    version: 1.1.0(@types/express@5.0.6)(@types/node@22.19.19)
   '@types/node':
     specifier: ^22.0.0
     version: 22.19.19
@@ -839,16 +839,60 @@ packages:
       pino: 9.14.0
     dev: true
 
+  /@supaproxy/core@1.1.0(@types/express@5.0.6)(@types/node@22.19.19):
+    resolution: {integrity: sha512-82u8IPWM4e+WTyDanrUyf4W/tPd2+v8turmgzkwwPV0uEO8rt+IWvmSDPvyF4HWB5BYz0LsuwsL38K3Dtzkv4A==}
+    dependencies:
+      '@anthropic-ai/sdk': 0.90.0(zod@3.25.76)
+      '@auth/core': 0.37.4
+      '@hono/node-server': 1.19.14(hono@4.12.21)
+      '@hono/zod-openapi': 0.18.4(hono@4.12.21)(zod@3.25.76)
+      '@lancedb/lancedb': 0.27.2(apache-arrow@18.1.0)
+      '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
+      '@slack/bolt': 4.7.2(@types/express@5.0.6)
+      '@supaproxy/auth': 1.0.0(hono@4.12.21)
+      '@supaproxy/connections': 0.2.1(zod@3.25.76)
+      '@supaproxy/consumers': 0.4.1(@slack/bolt@4.7.2)
+      '@supaproxy/guardrails': 0.7.5
+      '@supaproxy/mysql': 1.0.0(@supaproxy/core@1.1.0)(@types/node@22.19.19)
+      '@supaproxy/providers': 0.2.3(@anthropic-ai/sdk@0.90.0)(openai@6.38.0)
+      apache-arrow: 18.1.0
+      bcrypt: 6.0.0
+      bullmq: 5.76.10
+      dotenv: 17.4.2
+      glob: 11.1.0
+      hono: 4.12.21
+      ioredis: 5.10.1
+      jsonwebtoken: 9.0.3
+      mysql2: 3.22.3(@types/node@22.19.19)
+      openai: 6.38.0(zod@3.25.76)
+      pino: 9.14.0
+      pino-pretty: 13.1.3
+      yaml: 2.9.0
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - '@simplewebauthn/browser'
+      - '@simplewebauthn/server'
+      - '@types/express'
+      - '@types/node'
+      - bufferutil
+      - debug
+      - nodemailer
+      - supports-color
+      - utf-8-validate
+      - ws
+    dev: true
+
   /@supaproxy/guardrails@0.7.5:
     resolution: {integrity: sha512-YI/wwqbmFIiUw2lyzMmoFFDLKcCBSmAiyzJdVd3PnkHrg6ksGGuAFDAPBNzzTUBc3nWfYIJWK0O8EyDF+bjXXA==}
     dev: true
 
-  /@supaproxy/mysql@1.0.0(@supaproxy/core@1.0.0)(@types/node@22.19.19):
+  /@supaproxy/mysql@1.0.0(@supaproxy/core@1.1.0)(@types/node@22.19.19):
     resolution: {integrity: sha512-7WXGb9XnP4nsahI52vxIVaztJHN0ptk2yvVhHluwhBNGXKokQbfu4TiPS7DM31fbAbMQBITrPA8ySIMFC2V/fQ==}
     peerDependencies:
       '@supaproxy/core': '>=1.0.0'
     dependencies:
-      '@supaproxy/core': file:../supaproxy-core(@types/express@5.0.6)(@types/node@22.19.19)
+      '@supaproxy/core': 1.1.0(@types/express@5.0.6)(@types/node@22.19.19)
       mysql2: 3.22.3(@types/node@22.19.19)
       pino: 9.14.0
     transitivePeerDependencies:
@@ -2918,50 +2962,4 @@ packages:
 
   /zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-    dev: true
-
-  file:../supaproxy-core(@types/express@5.0.6)(@types/node@22.19.19):
-    resolution: {directory: ../supaproxy-core, type: directory}
-    id: file:../supaproxy-core
-    name: '@supaproxy/core'
-    dependencies:
-      '@anthropic-ai/sdk': 0.90.0(zod@3.25.76)
-      '@auth/core': 0.37.4
-      '@hono/node-server': 1.19.14(hono@4.12.21)
-      '@hono/zod-openapi': 0.18.4(hono@4.12.21)(zod@3.25.76)
-      '@lancedb/lancedb': 0.27.2(apache-arrow@18.1.0)
-      '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
-      '@slack/bolt': 4.7.2(@types/express@5.0.6)
-      '@supaproxy/auth': 1.0.0(hono@4.12.21)
-      '@supaproxy/connections': 0.2.1(zod@3.25.76)
-      '@supaproxy/consumers': 0.4.1(@slack/bolt@4.7.2)
-      '@supaproxy/guardrails': 0.7.5
-      '@supaproxy/mysql': 1.0.0(@supaproxy/core@1.0.0)(@types/node@22.19.19)
-      '@supaproxy/providers': 0.2.3(@anthropic-ai/sdk@0.90.0)(openai@6.38.0)
-      apache-arrow: 18.1.0
-      bcrypt: 6.0.0
-      bullmq: 5.76.10
-      dotenv: 17.4.2
-      glob: 11.1.0
-      hono: 4.12.21
-      ioredis: 5.10.1
-      jsonwebtoken: 9.0.3
-      mysql2: 3.22.3(@types/node@22.19.19)
-      openai: 6.38.0(zod@3.25.76)
-      pino: 9.14.0
-      pino-pretty: 13.1.3
-      yaml: 2.9.0
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - '@simplewebauthn/browser'
-      - '@simplewebauthn/server'
-      - '@types/express'
-      - '@types/node'
-      - bufferutil
-      - debug
-      - nodemailer
-      - supports-color
-      - utf-8-validate
-      - ws
     dev: true
