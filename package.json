@@ -1,0 +1,46 @@
+{
+  "name": "@supaproxy/bullmq",
+  "version": "1.0.0",
+  "description": "BullMQ queue adapter for SupaProxy: job queues, workers, and lifecycle scheduling",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "peerDependencies": {
+    "@supaproxy/core": ">=1.0.0"
+  },
+  "dependencies": {
+    "bullmq": "^5.74.1",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@supaproxy/core": "file:../supaproxy-core",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NumstackPtyLtd/supaproxy-bullmq.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
