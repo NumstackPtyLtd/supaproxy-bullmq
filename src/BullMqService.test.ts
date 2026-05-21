@@ -5,6 +5,7 @@ const mockGetJobCounts = vi.fn()
 const mockGetFailed = vi.fn()
 const mockDrain = vi.fn()
 const mockUpsertJobScheduler = vi.fn()
+const mockRemoveJobScheduler = vi.fn()
 const mockWorkerClose = vi.fn()
 const mockWorkerOn = vi.fn()
 
@@ -15,6 +16,7 @@ vi.mock('bullmq', () => ({
     getFailed: mockGetFailed,
     drain: mockDrain,
     upsertJobScheduler: mockUpsertJobScheduler,
+    removeJobScheduler: mockRemoveJobScheduler,
   })),
   Worker: vi.fn().mockImplementation(() => ({
     close: mockWorkerClose,
@@ -41,11 +43,12 @@ describe('BullMqService', () => {
   })
 
   describe('constructor', () => {
-    it('creates 3 queues (lifecycle, cold-messages, conversation-stats)', () => {
-      expect(Queue).toHaveBeenCalledTimes(3)
+    it('creates 4 queues (lifecycle, cold-messages, conversation-stats, knowledge-sync)', () => {
+      expect(Queue).toHaveBeenCalledTimes(4)
       expect(Queue).toHaveBeenCalledWith('lifecycle', { connection: { host: 'localhost', port: 6379 } })
       expect(Queue).toHaveBeenCalledWith('cold-messages', { connection: { host: 'localhost', port: 6379 } })
       expect(Queue).toHaveBeenCalledWith('conversation-stats', { connection: { host: 'localhost', port: 6379 } })
+      expect(Queue).toHaveBeenCalledWith('knowledge-sync', { connection: { host: 'localhost', port: 6379 } })
     })
   })
 
@@ -156,7 +159,7 @@ describe('BullMqService', () => {
   describe('listQueueNames', () => {
     it('returns all queue names', () => {
       const names = service.listQueueNames()
-      expect(names).toEqual(['lifecycle', 'cold-messages', 'conversation-stats'])
+      expect(names).toEqual(['lifecycle', 'cold-messages', 'conversation-stats', 'knowledge-sync'])
     })
   })
 
@@ -172,8 +175,34 @@ describe('BullMqService', () => {
     })
   })
 
+  describe('addKnowledgeSyncJob', () => {
+    it('adds a sync job to the knowledge sync queue', async () => {
+      const data = { orgId: 'org-1', pluginId: 'confluence-connector', configId: 'cfg-1' }
+      await service.addKnowledgeSyncJob(data)
+      expect(mockAdd).toHaveBeenCalledWith('sync', data, { removeOnComplete: 100, removeOnFail: 50 })
+    })
+  })
+
+  describe('scheduleKnowledgeSync', () => {
+    it('creates a repeatable job scheduler', async () => {
+      await service.scheduleKnowledgeSync('cfg-1', '0 2 * * *')
+      expect(mockUpsertJobScheduler).toHaveBeenCalledWith(
+        'sync-cfg-1',
+        { pattern: '0 2 * * *' },
+        { name: 'scheduled-sync', data: { configId: 'cfg-1' } },
+      )
+    })
+  })
+
+  describe('cancelKnowledgeSync', () => {
+    it('removes the job scheduler', async () => {
+      await service.cancelKnowledgeSync('cfg-1')
+      expect(mockRemoveJobScheduler).toHaveBeenCalledWith('sync-cfg-1')
+    })
+  })
+
   describe('startWorkers', () => {
-    it('creates workers and scheduler', async () => {
+    it('creates workers and scheduler (without knowledge sync)', async () => {
       const handler = {
         runLifecycleScan: vi.fn(),
         sendColdMessage: vi.fn(),
@@ -186,8 +215,21 @@ describe('BullMqService', () => {
       expect(Worker).toHaveBeenCalledWith('lifecycle', expect.any(Function), { connection: { host: 'localhost', port: 6379 } })
       expect(Worker).toHaveBeenCalledWith('cold-messages', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 3 })
       expect(Worker).toHaveBeenCalledWith('conversation-stats', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 2 })
-      expect(mockWorkerOn).toHaveBeenCalledTimes(3)
       expect(mockUpsertJobScheduler).toHaveBeenCalledWith('scan', { every: 30_000 }, { name: 'lifecycle-scan' })
+    })
+
+    it('creates knowledge sync worker when handler provides runKnowledgeSync', async () => {
+      const handler = {
+        runLifecycleScan: vi.fn(),
+        sendColdMessage: vi.fn(),
+        generateStats: vi.fn(),
+        runKnowledgeSync: vi.fn(),
+      }
+
+      await service.startWorkers(handler)
+
+      expect(Worker).toHaveBeenCalledTimes(4)
+      expect(Worker).toHaveBeenCalledWith('knowledge-sync', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 1 })
     })
   })
 
@@ -197,13 +239,14 @@ describe('BullMqService', () => {
         runLifecycleScan: vi.fn(),
         sendColdMessage: vi.fn(),
         generateStats: vi.fn(),
+        runKnowledgeSync: vi.fn(),
       }
 
       await service.startWorkers(handler)
       vi.clearAllMocks()
 
       await service.stopWorkers()
-      expect(mockWorkerClose).toHaveBeenCalledTimes(3)
+      expect(mockWorkerClose).toHaveBeenCalledTimes(4)
     })
 
     it('does not throw when workers were never started', async () => {
