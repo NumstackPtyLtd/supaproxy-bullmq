@@ -1,6 +1,6 @@
 import { Queue, Worker } from 'bullmq'
-import type { QueueService, QueueJobCounts, FailedJob, LifecycleHandler } from '@supaproxy/core/ports/queue'
-import { QUEUE_LIFECYCLE, QUEUE_COLD_MESSAGES, QUEUE_CONVERSATION_STATS, LIFECYCLE_SCAN_INTERVAL_MS, COLD_MESSAGE_CONCURRENCY, STATS_WORKER_CONCURRENCY } from '@supaproxy/core/defaults'
+import type { QueueService, QueueJobCounts, FailedJob, LifecycleHandler, KnowledgeSyncJobData } from '@supaproxy/core/ports/queue'
+import { QUEUE_LIFECYCLE, QUEUE_COLD_MESSAGES, QUEUE_CONVERSATION_STATS, QUEUE_KNOWLEDGE_SYNC, LIFECYCLE_SCAN_INTERVAL_MS, COLD_MESSAGE_CONCURRENCY, STATS_WORKER_CONCURRENCY, KNOWLEDGE_SYNC_CONCURRENCY } from '@supaproxy/core/defaults'
 import pino from 'pino'
 
 const log = pino({ name: 'bullmq-service' })
@@ -9,10 +9,12 @@ export class BullMqService implements QueueService {
   private readonly lifecycleQueue: Queue
   private readonly coldMessageQueue: Queue
   private readonly statsQueue: Queue
+  private readonly knowledgeSyncQueue: Queue
   private readonly queues: Record<string, Queue>
   private lifecycleWorker: Worker | null = null
   private coldMessageWorker: Worker | null = null
   private statsWorker: Worker | null = null
+  private knowledgeSyncWorker: Worker | null = null
 
   constructor(
     private readonly redisHost: string,
@@ -22,10 +24,12 @@ export class BullMqService implements QueueService {
     this.lifecycleQueue = new Queue(QUEUE_LIFECYCLE, { connection })
     this.coldMessageQueue = new Queue(QUEUE_COLD_MESSAGES, { connection })
     this.statsQueue = new Queue(QUEUE_CONVERSATION_STATS, { connection })
+    this.knowledgeSyncQueue = new Queue(QUEUE_KNOWLEDGE_SYNC, { connection })
     this.queues = {
       [QUEUE_LIFECYCLE]: this.lifecycleQueue,
       [QUEUE_COLD_MESSAGES]: this.coldMessageQueue,
       [QUEUE_CONVERSATION_STATS]: this.statsQueue,
+      [QUEUE_KNOWLEDGE_SYNC]: this.knowledgeSyncQueue,
     }
   }
 
@@ -35,6 +39,24 @@ export class BullMqService implements QueueService {
 
   async addStatsJob(conversationId: string): Promise<void> {
     await this.statsQueue.add('generate-stats', { conversationId })
+  }
+
+  async addKnowledgeSyncJob(data: KnowledgeSyncJobData): Promise<void> {
+    await this.knowledgeSyncQueue.add('sync', data, { removeOnComplete: 100, removeOnFail: 50 })
+  }
+
+  async scheduleKnowledgeSync(configId: string, cron: string): Promise<void> {
+    await this.knowledgeSyncQueue.upsertJobScheduler(
+      `sync-${configId}`,
+      { pattern: cron },
+      { name: 'scheduled-sync', data: { configId } },
+    )
+    log.info({ configId, cron }, 'Knowledge sync scheduled')
+  }
+
+  async cancelKnowledgeSync(configId: string): Promise<void> {
+    await this.knowledgeSyncQueue.removeJobScheduler(`sync-${configId}`)
+    log.info({ configId }, 'Knowledge sync schedule cancelled')
   }
 
   async getJobCounts(queueName: string): Promise<QueueJobCounts> {
@@ -107,6 +129,14 @@ export class BullMqService implements QueueService {
       await handler.generateStats(job.data.conversationId)
     }, { connection, concurrency: STATS_WORKER_CONCURRENCY })
 
+    if (handler.runKnowledgeSync) {
+      const syncHandler = handler.runKnowledgeSync.bind(handler)
+      this.knowledgeSyncWorker = new Worker(QUEUE_KNOWLEDGE_SYNC, async (job) => {
+        await syncHandler(job.data)
+      }, { connection, concurrency: KNOWLEDGE_SYNC_CONCURRENCY })
+      this.knowledgeSyncWorker.on('failed', (job, err) => log.error({ job: job?.id, error: err.message }, 'Knowledge sync job failed'))
+    }
+
     this.lifecycleWorker.on('failed', (job, err) => log.error({ job: job?.id, error: err.message }, 'Lifecycle job failed'))
     this.coldMessageWorker.on('failed', (job, err) => log.error({ job: job?.id, error: err.message }, 'Cold message job failed'))
     this.statsWorker.on('failed', (job, err) => log.error({ job: job?.id, error: err.message }, 'Stats job failed'))
@@ -119,5 +149,6 @@ export class BullMqService implements QueueService {
     await this.lifecycleWorker?.close()
     await this.coldMessageWorker?.close()
     await this.statsWorker?.close()
+    await this.knowledgeSyncWorker?.close()
   }
 }
