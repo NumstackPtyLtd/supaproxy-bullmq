@@ -7,6 +7,7 @@ vi.mock('bullmq', () => ({
     getFailed: vi.fn(),
     drain: vi.fn(),
     upsertJobScheduler: vi.fn(),
+    removeJobScheduler: vi.fn(),
   })),
   Worker: vi.fn().mockImplementation(() => ({
     close: vi.fn(),
@@ -31,8 +32,9 @@ describe('createBullMqQueue', () => {
 
   it('has all QueueService methods', () => {
     const service = createBullMqQueue('127.0.0.1', 6380)
-    expect(typeof service.addColdMessage).toBe('function')
-    expect(typeof service.addStatsJob).toBe('function')
+    expect(typeof service.addJob).toBe('function')
+    expect(typeof service.scheduleJob).toBe('function')
+    expect(typeof service.cancelSchedule).toBe('function')
     expect(typeof service.getJobCounts).toBe('function')
     expect(typeof service.getFailedJobs).toBe('function')
     expect(typeof service.retryAllFailed).toBe('function')
@@ -41,5 +43,10 @@ describe('createBullMqQueue', () => {
     expect(typeof service.queueExists).toBe('function')
     expect(typeof service.startWorkers).toBe('function')
     expect(typeof service.stopWorkers).toBe('function')
+  })
+
+  it('accepts initial queue names', () => {
+    const service = createBullMqQueue('localhost', 6379, ['queue-x', 'queue-y'])
+    expect(service.listQueueNames()).toEqual(['queue-x', 'queue-y'])
   })
 })

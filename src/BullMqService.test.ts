@@ -39,54 +39,68 @@ describe('BullMqService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    service = new BullMqService('localhost', 6379)
+    service = new BullMqService('localhost', 6379, ['queue-a', 'queue-b'])
   })
 
   describe('constructor', () => {
-    it('creates 4 queues (lifecycle, cold-messages, conversation-stats, knowledge-sync)', () => {
-      expect(Queue).toHaveBeenCalledTimes(4)
-      expect(Queue).toHaveBeenCalledWith('lifecycle', { connection: { host: 'localhost', port: 6379 } })
-      expect(Queue).toHaveBeenCalledWith('cold-messages', { connection: { host: 'localhost', port: 6379 } })
-      expect(Queue).toHaveBeenCalledWith('conversation-stats', { connection: { host: 'localhost', port: 6379 } })
-      expect(Queue).toHaveBeenCalledWith('knowledge-sync', { connection: { host: 'localhost', port: 6379 } })
+    it('creates queues from provided names', () => {
+      expect(Queue).toHaveBeenCalledTimes(2)
+      expect(Queue).toHaveBeenCalledWith('queue-a', { connection: { host: 'localhost', port: 6379 } })
+      expect(Queue).toHaveBeenCalledWith('queue-b', { connection: { host: 'localhost', port: 6379 } })
     })
   })
 
-  describe('addColdMessage', () => {
-    it('adds a job to the cold message queue', async () => {
-      const data = {
-        conversationId: 'conv-1',
-        consumerType: 'slack',
-        channel: 'C123',
-        externalThreadId: 'T456',
-      }
-      await service.addColdMessage(data)
-      expect(mockAdd).toHaveBeenCalledWith('send-cold-message', data)
+  describe('addJob', () => {
+    it('adds a job to the specified queue', async () => {
+      await service.addJob('queue-a', 'process', { id: 'item-1' })
+      expect(mockAdd).toHaveBeenCalledWith('process', { id: 'item-1' }, undefined)
+    })
+
+    it('passes job options when provided', async () => {
+      const options = { removeOnComplete: 50, removeOnFail: 10 }
+      await service.addJob('queue-a', 'process', { id: 'item-1' }, options)
+      expect(mockAdd).toHaveBeenCalledWith('process', { id: 'item-1' }, options)
+    })
+
+    it('creates queue on demand if not pre-registered', async () => {
+      await service.addJob('queue-c', 'process', { id: 'item-1' })
+      expect(Queue).toHaveBeenCalledTimes(3)
+      expect(mockAdd).toHaveBeenCalledWith('process', { id: 'item-1' }, undefined)
     })
   })
 
-  describe('addStatsJob', () => {
-    it('adds a job to the stats queue', async () => {
-      await service.addStatsJob('conv-42')
-      expect(mockAdd).toHaveBeenCalledWith('generate-stats', { conversationId: 'conv-42' })
+  describe('scheduleJob', () => {
+    it('creates a repeatable job scheduler', async () => {
+      await service.scheduleJob('queue-a', 'sched-1', '0 2 * * *', 'scheduled-task', { key: 'val' })
+      expect(mockUpsertJobScheduler).toHaveBeenCalledWith(
+        'sched-1',
+        { pattern: '0 2 * * *' },
+        { name: 'scheduled-task', data: { key: 'val' } },
+      )
+    })
+  })
+
+  describe('cancelSchedule', () => {
+    it('removes the job scheduler', async () => {
+      await service.cancelSchedule('queue-a', 'sched-1')
+      expect(mockRemoveJobScheduler).toHaveBeenCalledWith('sched-1')
+    })
+
+    it('does nothing for unknown queue', async () => {
+      await service.cancelSchedule('unknown', 'sched-1')
+      expect(mockRemoveJobScheduler).not.toHaveBeenCalled()
     })
   })
 
   describe('getJobCounts', () => {
     it('returns counts from the queue', async () => {
-      mockGetJobCounts.mockResolvedValue({
-        waiting: 5,
-        active: 2,
-        completed: 10,
-        failed: 1,
-        delayed: 3,
-      })
-      const counts = await service.getJobCounts('lifecycle')
+      mockGetJobCounts.mockResolvedValue({ waiting: 5, active: 2, completed: 10, failed: 1, delayed: 3 })
+      const counts = await service.getJobCounts('queue-a')
       expect(counts).toEqual({ waiting: 5, active: 2, completed: 10, failed: 1, delayed: 3 })
     })
 
     it('returns zeroes for unknown queue', async () => {
-      const counts = await service.getJobCounts('unknown-queue')
+      const counts = await service.getJobCounts('unknown')
       expect(counts).toEqual({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 })
     })
   })
@@ -94,162 +108,101 @@ describe('BullMqService', () => {
   describe('getFailedJobs', () => {
     it('returns mapped failed jobs', async () => {
       mockGetFailed.mockResolvedValue([
-        {
-          id: 'job-1',
-          data: { conversationId: 'c1' },
-          failedReason: 'timeout',
-          timestamp: 1000,
-          attemptsMade: 3,
-        },
-        {
-          id: 'job-2',
-          data: { conversationId: 'c2' },
-          failedReason: 'error',
-          timestamp: 2000,
-          attemptsMade: 1,
-        },
+        { id: 'job-1', data: { key: 'a' }, failedReason: 'timeout', timestamp: 1000, attemptsMade: 3 },
+        { id: 'job-2', data: { key: 'b' }, failedReason: 'error', timestamp: 2000, attemptsMade: 1 },
       ])
-
-      const result = await service.getFailedJobs('cold-messages', 10)
-      expect(mockGetFailed).toHaveBeenCalledWith(0, 10)
-      expect(result).toEqual([
-        { id: 'job-1', data: { conversationId: 'c1' }, failedReason: 'timeout', timestamp: 1000, attemptsMade: 3 },
-        { id: 'job-2', data: { conversationId: 'c2' }, failedReason: 'error', timestamp: 2000, attemptsMade: 1 },
-      ])
+      const result = await service.getFailedJobs('queue-a', 10)
+      expect(result).toHaveLength(2)
+      expect(result[0]).toEqual({ id: 'job-1', data: { key: 'a' }, failedReason: 'timeout', timestamp: 1000, attemptsMade: 3 })
     })
 
     it('returns empty array for unknown queue', async () => {
-      const result = await service.getFailedJobs('nope', 10)
-      expect(result).toEqual([])
+      expect(await service.getFailedJobs('unknown', 10)).toEqual([])
     })
   })
 
   describe('retryAllFailed', () => {
     it('retries jobs and returns count', async () => {
       const mockRetry = vi.fn()
-      mockGetFailed.mockResolvedValue([
-        { retry: mockRetry },
-        { retry: mockRetry },
-        { retry: mockRetry },
-      ])
-
-      const count = await service.retryAllFailed('lifecycle')
-      expect(count).toBe(3)
-      expect(mockRetry).toHaveBeenCalledTimes(3)
+      mockGetFailed.mockResolvedValue([{ retry: mockRetry }, { retry: mockRetry }])
+      const count = await service.retryAllFailed('queue-a')
+      expect(count).toBe(2)
+      expect(mockRetry).toHaveBeenCalledTimes(2)
     })
 
     it('returns 0 for unknown queue', async () => {
-      const count = await service.retryAllFailed('nope')
-      expect(count).toBe(0)
+      expect(await service.retryAllFailed('unknown')).toBe(0)
     })
   })
 
   describe('drainQueue', () => {
     it('drains the queue', async () => {
-      await service.drainQueue('lifecycle')
+      await service.drainQueue('queue-a')
       expect(mockDrain).toHaveBeenCalled()
     })
 
     it('does nothing for unknown queue', async () => {
-      await service.drainQueue('nope')
+      await service.drainQueue('unknown')
       expect(mockDrain).not.toHaveBeenCalled()
     })
   })
 
   describe('listQueueNames', () => {
-    it('returns all queue names', () => {
-      const names = service.listQueueNames()
-      expect(names).toEqual(['lifecycle', 'cold-messages', 'conversation-stats', 'knowledge-sync'])
+    it('returns registered queue names', () => {
+      expect(service.listQueueNames()).toEqual(['queue-a', 'queue-b'])
     })
   })
 
   describe('queueExists', () => {
-    it('returns true for existing queue', () => {
-      expect(service.queueExists('lifecycle')).toBe(true)
-      expect(service.queueExists('cold-messages')).toBe(true)
-      expect(service.queueExists('conversation-stats')).toBe(true)
+    it('returns true for registered queue', () => {
+      expect(service.queueExists('queue-a')).toBe(true)
     })
 
-    it('returns false for non-existing queue', () => {
-      expect(service.queueExists('nope')).toBe(false)
-    })
-  })
-
-  describe('addKnowledgeSyncJob', () => {
-    it('adds a sync job to the knowledge sync queue', async () => {
-      const data = { orgId: 'org-1', pluginId: 'confluence-connector', configId: 'cfg-1' }
-      await service.addKnowledgeSyncJob(data)
-      expect(mockAdd).toHaveBeenCalledWith('sync', data, { removeOnComplete: 100, removeOnFail: 50 })
-    })
-  })
-
-  describe('scheduleKnowledgeSync', () => {
-    it('creates a repeatable job scheduler', async () => {
-      await service.scheduleKnowledgeSync('cfg-1', '0 2 * * *')
-      expect(mockUpsertJobScheduler).toHaveBeenCalledWith(
-        'sync-cfg-1',
-        { pattern: '0 2 * * *' },
-        { name: 'scheduled-sync', data: { configId: 'cfg-1' } },
-      )
-    })
-  })
-
-  describe('cancelKnowledgeSync', () => {
-    it('removes the job scheduler', async () => {
-      await service.cancelKnowledgeSync('cfg-1')
-      expect(mockRemoveJobScheduler).toHaveBeenCalledWith('sync-cfg-1')
+    it('returns false for unregistered queue', () => {
+      expect(service.queueExists('unknown')).toBe(false)
     })
   })
 
   describe('startWorkers', () => {
-    it('creates workers and scheduler (without knowledge sync)', async () => {
-      const handler = {
-        runLifecycleScan: vi.fn(),
-        sendColdMessage: vi.fn(),
-        generateStats: vi.fn(),
-      }
+    it('creates workers for configs with handlers', async () => {
+      await service.startWorkers([
+        { name: 'queue-a', handler: vi.fn(), concurrency: 2 },
+        { name: 'queue-b', handler: vi.fn() },
+      ])
 
-      await service.startWorkers(handler)
-
-      expect(Worker).toHaveBeenCalledTimes(3)
-      expect(Worker).toHaveBeenCalledWith('lifecycle', expect.any(Function), { connection: { host: 'localhost', port: 6379 } })
-      expect(Worker).toHaveBeenCalledWith('cold-messages', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 3 })
-      expect(Worker).toHaveBeenCalledWith('conversation-stats', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 2 })
-      expect(mockUpsertJobScheduler).toHaveBeenCalledWith('scan', { every: 30_000 }, { name: 'lifecycle-scan' })
+      expect(Worker).toHaveBeenCalledTimes(2)
+      expect(Worker).toHaveBeenCalledWith('queue-a', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 2 })
+      expect(Worker).toHaveBeenCalledWith('queue-b', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 1 })
     })
 
-    it('creates knowledge sync worker when handler provides runKnowledgeSync', async () => {
-      const handler = {
-        runLifecycleScan: vi.fn(),
-        sendColdMessage: vi.fn(),
-        generateStats: vi.fn(),
-        runKnowledgeSync: vi.fn(),
-      }
+    it('sets up schedulers for configs with scheduler property', async () => {
+      await service.startWorkers([
+        { name: 'queue-a', scheduler: { every: 30000, jobName: 'scan' } },
+      ])
+      expect(mockUpsertJobScheduler).toHaveBeenCalledWith('queue-a', { every: 30000 }, { name: 'scan' })
+    })
 
-      await service.startWorkers(handler)
-
-      expect(Worker).toHaveBeenCalledTimes(4)
-      expect(Worker).toHaveBeenCalledWith('knowledge-sync', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 1 })
+    it('skips worker creation for configs without handler', async () => {
+      await service.startWorkers([
+        { name: 'queue-a' },
+      ])
+      expect(Worker).not.toHaveBeenCalled()
     })
   })
 
   describe('stopWorkers', () => {
-    it('closes workers after they have been started', async () => {
-      const handler = {
-        runLifecycleScan: vi.fn(),
-        sendColdMessage: vi.fn(),
-        generateStats: vi.fn(),
-        runKnowledgeSync: vi.fn(),
-      }
-
-      await service.startWorkers(handler)
+    it('closes all started workers', async () => {
+      await service.startWorkers([
+        { name: 'queue-a', handler: vi.fn() },
+        { name: 'queue-b', handler: vi.fn() },
+      ])
       vi.clearAllMocks()
 
       await service.stopWorkers()
-      expect(mockWorkerClose).toHaveBeenCalledTimes(4)
+      expect(mockWorkerClose).toHaveBeenCalledTimes(2)
     })
 
-    it('does not throw when workers were never started', async () => {
+    it('does not throw when no workers started', async () => {
       await expect(service.stopWorkers()).resolves.toBeUndefined()
     })
   })
