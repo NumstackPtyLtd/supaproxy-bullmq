@@ -1,6 +1,6 @@
 {
   "name": "@supaproxy/bullmq",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "BullMQ queue adapter for SupaProxy: job queues, workers, and lifecycle scheduling",
   "type": "module",
   "main": "dist/index.js",
