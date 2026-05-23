@@ -57,15 +57,15 @@ describe('BullMqService', () => {
         channel: 'C123',
         externalThreadId: 'T456',
       }
-      await service.addColdMessage(data)
-      expect(mockAdd).toHaveBeenCalledWith('send-cold-message', data)
+      await service.addJob('cold-messages', 'send-cold-message', data)
+      expect(mockAdd).toHaveBeenCalledWith('send-cold-message', data, expect.any(Object))
     })
   })
 
-  describe('addStatsJob', () => {
-    it('adds a job to the stats queue', async () => {
-      await service.addStatsJob('conv-42')
-      expect(mockAdd).toHaveBeenCalledWith('generate-stats', { conversationId: 'conv-42' })
+  describe('addJob', () => {
+    it('adds a job to any queue by name', async () => {
+      await service.addJob('conversation-stats', 'generate-stats', { conversationId: 'conv-42' })
+      expect(mockAdd).toHaveBeenCalledWith('generate-stats', { conversationId: 'conv-42' }, expect.any(Object))
     })
   })
 
@@ -174,16 +174,16 @@ describe('BullMqService', () => {
 
   describe('startWorkers', () => {
     it('creates workers and scheduler', async () => {
-      const handler = {
-        runLifecycleScan: vi.fn(),
-        sendColdMessage: vi.fn(),
-        generateStats: vi.fn(),
-      }
+      const configs = [
+        { name: 'lifecycle', handler: vi.fn(), scheduler: { every: 30000, jobName: 'lifecycle-scan' } },
+        { name: 'cold-messages', handler: vi.fn(), concurrency: 3 },
+        { name: 'conversation-stats', handler: vi.fn(), concurrency: 2 },
+      ]
 
-      await service.startWorkers(handler)
+      await service.startWorkers(configs)
 
       expect(Worker).toHaveBeenCalledTimes(3)
-      expect(Worker).toHaveBeenCalledWith('lifecycle', expect.any(Function), { connection: { host: 'localhost', port: 6379 } })
+      expect(Worker).toHaveBeenCalledWith('lifecycle', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: undefined })
       expect(Worker).toHaveBeenCalledWith('cold-messages', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 3 })
       expect(Worker).toHaveBeenCalledWith('conversation-stats', expect.any(Function), { connection: { host: 'localhost', port: 6379 }, concurrency: 2 })
       expect(mockWorkerOn).toHaveBeenCalledTimes(3)
@@ -193,13 +193,13 @@ describe('BullMqService', () => {
 
   describe('stopWorkers', () => {
     it('closes workers after they have been started', async () => {
-      const handler = {
-        runLifecycleScan: vi.fn(),
-        sendColdMessage: vi.fn(),
-        generateStats: vi.fn(),
-      }
+      const configs = [
+        { name: 'lifecycle', handler: vi.fn() },
+        { name: 'cold-messages', handler: vi.fn() },
+        { name: 'conversation-stats', handler: vi.fn() },
+      ]
 
-      await service.startWorkers(handler)
+      await service.startWorkers(configs)
       vi.clearAllMocks()
 
       await service.stopWorkers()

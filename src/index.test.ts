@@ -31,8 +31,9 @@ describe('createBullMqQueue', () => {
 
   it('has all QueueService methods', () => {
     const service = createBullMqQueue('127.0.0.1', 6380)
-    expect(typeof service.addColdMessage).toBe('function')
-    expect(typeof service.addStatsJob).toBe('function')
+    expect(typeof service.addJob).toBe('function')
+    expect(typeof service.scheduleJob).toBe('function')
+    expect(typeof service.cancelSchedule).toBe('function')
     expect(typeof service.getJobCounts).toBe('function')
     expect(typeof service.getFailedJobs).toBe('function')
     expect(typeof service.retryAllFailed).toBe('function')
