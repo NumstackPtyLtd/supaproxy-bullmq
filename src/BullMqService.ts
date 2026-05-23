@@ -1,40 +1,36 @@
 import { Queue, Worker } from 'bullmq'
-import type { QueueService, QueueJobCounts, FailedJob, LifecycleHandler } from '@supaproxy/core/ports/queue'
-import { QUEUE_LIFECYCLE, QUEUE_COLD_MESSAGES, QUEUE_CONVERSATION_STATS, LIFECYCLE_SCAN_INTERVAL_MS, COLD_MESSAGE_CONCURRENCY, STATS_WORKER_CONCURRENCY } from '@supaproxy/core/defaults'
+import type { QueueService, QueueJobCounts, FailedJob, QueueConfig, JobOptions } from '@supaproxy/core/ports/queue'
 import pino from 'pino'
 
 const log = pino({ name: 'bullmq-service' })
 
 export class BullMqService implements QueueService {
-  private readonly lifecycleQueue: Queue
-  private readonly coldMessageQueue: Queue
-  private readonly statsQueue: Queue
-  private readonly queues: Record<string, Queue>
-  private lifecycleWorker: Worker | null = null
-  private coldMessageWorker: Worker | null = null
-  private statsWorker: Worker | null = null
+  private readonly queues: Record<string, Queue> = {}
+  private readonly workers: Worker[] = []
+  private readonly redisHost: string
+  private readonly redisPort: number
 
-  constructor(
-    private readonly redisHost: string,
-    private readonly redisPort: number,
-  ) {
-    const connection = { host: this.redisHost, port: this.redisPort }
-    this.lifecycleQueue = new Queue(QUEUE_LIFECYCLE, { connection })
-    this.coldMessageQueue = new Queue(QUEUE_COLD_MESSAGES, { connection })
-    this.statsQueue = new Queue(QUEUE_CONVERSATION_STATS, { connection })
-    this.queues = {
-      [QUEUE_LIFECYCLE]: this.lifecycleQueue,
-      [QUEUE_COLD_MESSAGES]: this.coldMessageQueue,
-      [QUEUE_CONVERSATION_STATS]: this.statsQueue,
-    }
+  constructor(redisHost: string, redisPort: number) {
+    this.redisHost = redisHost
+    this.redisPort = redisPort
   }
 
-  async addColdMessage(data: { conversationId: string; consumerType: string; channel: string; externalThreadId: string }): Promise<void> {
-    await this.coldMessageQueue.add('send-cold-message', data)
+  async addJob(queueName: string, jobName: string, data: Record<string, unknown>, options?: JobOptions): Promise<void> {
+    const queue = this.getOrCreateQueue(queueName)
+    await queue.add(jobName, data, {
+      removeOnComplete: options?.removeOnComplete ?? 100,
+      removeOnFail: options?.removeOnFail ?? 500,
+    })
   }
 
-  async addStatsJob(conversationId: string): Promise<void> {
-    await this.statsQueue.add('generate-stats', { conversationId })
+  async scheduleJob(queueName: string, schedulerId: string, cron: string, jobName: string, data: Record<string, unknown>): Promise<void> {
+    const queue = this.getOrCreateQueue(queueName)
+    await queue.upsertJobScheduler(schedulerId, { pattern: cron }, { name: jobName, data })
+  }
+
+  async cancelSchedule(queueName: string, schedulerId: string): Promise<void> {
+    const queue = this.queues[queueName]
+    if (queue) await queue.removeJobScheduler(schedulerId)
   }
 
   async getJobCounts(queueName: string): Promise<QueueJobCounts> {
@@ -88,36 +84,52 @@ export class BullMqService implements QueueService {
     return name in this.queues
   }
 
-  async startWorkers(handler: LifecycleHandler): Promise<void> {
+  async startWorkers(configs: QueueConfig[]): Promise<void> {
     const connection = { host: this.redisHost, port: this.redisPort }
 
-    this.lifecycleWorker = new Worker(QUEUE_LIFECYCLE, async () => {
-      try {
-        await handler.runLifecycleScan()
-      } catch (err) {
-        log.error({ error: (err as Error).message }, 'Lifecycle scan failed')
+    for (const config of configs) {
+      this.getOrCreateQueue(config.name)
+
+      if (config.handler) {
+        const workerOpts = config.concurrency
+          ? { connection, concurrency: config.concurrency }
+          : { connection }
+        const worker = new Worker(config.name, async (job) => {
+          await config.handler!(job.data)
+        }, workerOpts)
+
+        worker.on('failed', (job, err) => {
+          log.error({ queue: config.name, job: job?.id, error: err.message }, 'Job failed')
+        })
+
+        this.workers.push(worker)
       }
-    }, { connection })
 
-    this.coldMessageWorker = new Worker(QUEUE_COLD_MESSAGES, async (job) => {
-      await handler.sendColdMessage(job.data)
-    }, { connection, concurrency: COLD_MESSAGE_CONCURRENCY })
+      if (config.scheduler) {
+        const queue = this.queues[config.name]
+        if (config.scheduler.every) {
+          await queue.upsertJobScheduler('scan', { every: config.scheduler.every }, { name: config.scheduler.jobName })
+        } else if (config.scheduler.pattern) {
+          await queue.upsertJobScheduler('cron', { pattern: config.scheduler.pattern }, { name: config.scheduler.jobName })
+        }
+      }
+    }
 
-    this.statsWorker = new Worker(QUEUE_CONVERSATION_STATS, async (job) => {
-      await handler.generateStats(job.data.conversationId)
-    }, { connection, concurrency: STATS_WORKER_CONCURRENCY })
-
-    this.lifecycleWorker.on('failed', (job, err) => log.error({ job: job?.id, error: err.message }, 'Lifecycle job failed'))
-    this.coldMessageWorker.on('failed', (job, err) => log.error({ job: job?.id, error: err.message }, 'Cold message job failed'))
-    this.statsWorker.on('failed', (job, err) => log.error({ job: job?.id, error: err.message }, 'Stats job failed'))
-
-    await this.lifecycleQueue.upsertJobScheduler('scan', { every: LIFECYCLE_SCAN_INTERVAL_MS }, { name: 'lifecycle-scan' })
-    log.info(`BullMQ workers started (scan every ${LIFECYCLE_SCAN_INTERVAL_MS / 1000}s, ${COLD_MESSAGE_CONCURRENCY} cold message workers, ${STATS_WORKER_CONCURRENCY} stats workers)`)
+    const names = configs.map(c => c.name).join(', ')
+    log.info({ workerCount: this.workers.length, queues: configs.map(c => c.name) }, 'BullMQ workers started')
   }
 
   async stopWorkers(): Promise<void> {
-    await this.lifecycleWorker?.close()
-    await this.coldMessageWorker?.close()
-    await this.statsWorker?.close()
+    for (const worker of this.workers) {
+      await worker.close()
+    }
+    this.workers.length = 0
+  }
+
+  private getOrCreateQueue(name: string): Queue {
+    if (!this.queues[name]) {
+      this.queues[name] = new Queue(name, { connection: { host: this.redisHost, port: this.redisPort } })
+    }
+    return this.queues[name]
   }
 }
