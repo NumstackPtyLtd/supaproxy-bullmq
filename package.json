@@ -22,14 +22,14 @@
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
-    "@supaproxy/core": ">=1.0.0"
+    "@supaproxy/core": ">=2.0.0"
   },
   "dependencies": {
     "bullmq": "^5.74.1",
     "pino": "^9.6.0"
   },
   "devDependencies": {
-    "@supaproxy/core": "^1.0.0",
+    "@supaproxy/core": "^2.0.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
